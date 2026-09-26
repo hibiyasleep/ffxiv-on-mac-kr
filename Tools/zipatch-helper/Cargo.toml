@@ -6,4 +6,4 @@ license = "MIT"
 publish = false
 
 [dependencies]
-zipatch-rs = "=1.7.0"
+zipatch = "=1.0.1"
