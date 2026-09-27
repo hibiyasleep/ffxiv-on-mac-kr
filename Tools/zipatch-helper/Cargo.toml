@@ -7,3 +7,6 @@ publish = false
 
 [dependencies]
 zipatch = "=1.0.1"
+
+[patch.crates-io]
+zipatch = { path = ".patched/zipatch" }
