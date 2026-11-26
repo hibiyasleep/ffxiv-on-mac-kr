@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import os
 import WebKit
 
 private let officialLoginURL = URL(string: "https://newlauncher.ff14.co.kr/")!
@@ -220,18 +221,35 @@ final class WebLoginController: NSObject, WKNavigationDelegate, WKUIDelegate, NS
 
     nonisolated func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         Task { @MainActor [weak self] in
-            guard let self,
-                  message.frameInfo.securityOrigin.protocol.lowercased() == "https",
-                  message.frameInfo.securityOrigin.host.lowercased() == "newlauncher.ff14.co.kr",
-                  message.frameInfo.securityOrigin.port == 0 || message.frameInfo.securityOrigin.port == 443,
-                  let body = message.body as? [String: Any],
+            guard let self else { return }
+            let origin = message.frameInfo.securityOrigin
+            guard origin.protocol.lowercased() == "https",
+                  origin.host.lowercased() == "newlauncher.ff14.co.kr",
+                  origin.port == 0 || origin.port == 443 else {
+                Self.trace("dropped callback origin=\(origin.protocol)://\(origin.host):\(origin.port)")
+                return
+            }
+            guard let body = message.body as? [String: Any],
                   let name = body["name"] as? String,
-                  let args = body["args"] as? [Any] else { return }
+                  let args = body["args"] as? [Any] else {
+                Self.trace("dropped callback unreadable body \(String(describing: type(of: message.body)))")
+                return
+            }
             self.handle(name: name, args: args)
         }
     }
 
+    private static let scriptLogger = Logger(subsystem: "land.jiyu.xivkrlauncher", category: "weblogin")
+
+    /// Default-level unified log, also copied to stderr. `Logger.info` is
+    /// hidden from `log stream` unless the stream is started with `--level info`.
+    private static func trace(_ line: String) {
+        scriptLogger.notice("\(line, privacy: .public)")
+        FileHandle.standardError.write(Data((line + "\n").utf8))
+    }
+
     private func handle(name: String, args: [Any]) {
+        Self.trace("callback \(name) args=\(Self.describeScriptArgs(args))")
         switch name {
         case "GetDataReady":
             appStartData()
@@ -791,10 +809,11 @@ final class WebLoginController: NSObject, WKNavigationDelegate, WKUIDelegate, NS
             LauncherLoginHidden() { post('LauncherLoginHidden', arguments); return true; },
             LauncherMaximize() { post('LauncherMaximize', arguments); return true; },
             LauncherRestoreSize() { post('LauncherRestoreSize', arguments); return true; },
-            SetData() { return true; },
-            SetType() { return true; },
-            SetUseDirectX11() { return true; },
+            SetData() { post('SetData', arguments); return true; },
+            SetType() { post('SetType', arguments); return true; },
+            SetUseDirectX11() { post('SetUseDirectX11', arguments); return true; },
             GetAllLauncherSettings() {
+              post('GetAllLauncherSettings', arguments);
               try {
                 if (typeof AppLauncherSettingsJson === 'function') AppLauncherSettingsJson(settingsJSON);
               } catch (_) {}
@@ -809,7 +828,7 @@ final class WebLoginController: NSObject, WKNavigationDelegate, WKUIDelegate, NS
               const value = Reflect.get(target, prop, receiver);
               if (typeof value === 'function') return value.bind(target);
               if (value !== undefined) return value;
-              return () => true;
+              return (...args) => { post(String(prop), args); return true; };
             },
             has(target, prop) {
               return true;
@@ -836,6 +855,38 @@ final class WebLoginController: NSObject, WKNavigationDelegate, WKUIDelegate, NS
 
     private static func formatBytes(_ value: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: max(0, value), countStyle: .file)
+    }
+
+    /// Shape of a page callback. String values that look like a game session
+    /// are replaced with a length marker so the unified log never stores one.
+    private static func describeScriptArgs(_ args: [Any]) -> String {
+        let text = "[" + args.map(describeScriptValue).joined(separator: ", ") + "]"
+        guard text.count > 512 else { return text }
+        return String(text.prefix(512)) + "…"
+    }
+
+    private static func describeScriptValue(_ value: Any) -> String {
+        if value is NSNull { return "null" }
+        if let value = value as? String {
+            if isPlausibleToken(value) { return "<token len=\(value.count)>" }
+            let cleaned = String(value.unicodeScalars.filter { scalar in
+                scalar == "\n" || scalar == "\r" || scalar == "\t" || scalar.value >= 0x20
+            }.map(Character.init))
+            guard cleaned.count <= 80 else { return "<string len=\(value.count)>" }
+            return "\"\(cleaned)\""
+        }
+        if let value = value as? Bool { return value ? "true" : "false" }
+        if let value = value as? NSNumber { return value.stringValue }
+        if let value = value as? [String: Any] {
+            let body = value.keys.sorted().map { key in
+                "\(key): \(describeScriptValue(value[key] ?? NSNull()))"
+            }.joined(separator: ", ")
+            return "{\(body)}"
+        }
+        if let value = value as? [Any] {
+            return "[" + value.map(describeScriptValue).joined(separator: ", ") + "]"
+        }
+        return String(describing: type(of: value))
     }
 
     private static func isPlausibleToken(_ token: String) -> Bool {
