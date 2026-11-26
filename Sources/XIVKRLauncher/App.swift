@@ -140,7 +140,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func buildWindow() {
         window = LauncherWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1360, height: 850),
+            contentRect: NSRect(x: 0, y: 0, width: 1440, height: 872),
             styleMask: [.borderless, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
