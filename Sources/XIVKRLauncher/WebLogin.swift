@@ -731,11 +731,44 @@ final class WebLoginController: NSObject, WKNavigationDelegate, WKUIDelegate, NS
     // MARK: Script source
 
     private func bridgeScript() -> String {
-        """
+        let installPath = windowsGamePath.lowercased().hasSuffix("\\game")
+            ? String(windowsGamePath.dropLast(5))
+            : windowsGamePath
+        let settings: [String: Any] = [
+            "theme": 0,
+            "closeButtonMode": 0,
+            "startButtonMode": 0,
+            "gameInstallPath": installPath,
+            "screenMode": "0",
+            "uiScaling": "1",
+            "autoUpdateOnLauncherStart": 0,
+            "multiDownloadMode": 0,
+            "cpuHighPerformanceMode": 0,
+            "errorReportAgreement": 0,
+            "launcherVersion": launcherVersion,
+            "remainingDiskSpaceGb": 0,
+            "closeButtonFirstClicked": 0,
+            "uiScalingAutoAdjusted": false,
+            "effectiveUiScaling": 1,
+            "firstLoginSucceeded": 0,
+            "integrityCheckInProgress": 0,
+            "os": "",
+            "resolution": "",
+            "backgroundImage": NSNull(),
+        ]
+        let settingsJSON: String
+        if let data = try? JSONSerialization.data(withJSONObject: settings),
+           let encoded = String(data: data, encoding: .utf8) {
+            settingsJSON = Self.javascriptString(encoded)
+        } else {
+            settingsJSON = Self.javascriptString("{}")
+        }
+        return """
         (() => {
           const post = (name, args) => {
             try { window.webkit.messageHandlers.xivkr.postMessage({name: name, args: Array.prototype.slice.call(args)}); } catch (_) {}
           };
+          const settingsJSON = __XIVKR_SETTINGS_JSON__;
           const bridge = {
             GetDataReady() { post('GetDataReady', arguments); return true; },
             LoginSuccess() {
@@ -761,21 +794,38 @@ final class WebLoginController: NSObject, WKNavigationDelegate, WKUIDelegate, NS
             SetData() { return true; },
             SetType() { return true; },
             SetUseDirectX11() { return true; },
-            LauncherLogOut() { post('LauncherLogOut', arguments); return true; }
+            GetAllLauncherSettings() {
+              try {
+                if (typeof AppLauncherSettingsJson === 'function') AppLauncherSettingsJson(settingsJSON);
+              } catch (_) {}
+              return true;
+            },
+            LauncherLogOut() { post('LauncherLogOut', arguments); return true; },
+            LauncherLogOut2() { post('LauncherLogOut', arguments); return true; }
           };
-          let target = null;
-          try { target = window.external; } catch (_) {}
-          if (!target || (typeof target !== 'object' && typeof target !== 'function')) {
-            target = bridge;
-            try { Object.defineProperty(window, 'external', {value: target, writable: false, configurable: false}); } catch (_) { try { window.external = target; } catch (_) {} }
-          } else {
-            Object.keys(bridge).forEach((key) => { try { target[key] = bridge[key]; } catch (_) {} });
+          const external = new Proxy(bridge, {
+            get(target, prop, receiver) {
+              if (typeof prop === 'symbol') return Reflect.get(target, prop, receiver);
+              const value = Reflect.get(target, prop, receiver);
+              if (typeof value === 'function') return value.bind(target);
+              if (value !== undefined) return value;
+              return () => true;
+            },
+            has(target, prop) {
+              return true;
+            }
+          });
+          try {
+            Object.defineProperty(window, 'external', {value: external, writable: false, configurable: false});
+          } catch (_) {
+            try { window.external = external; } catch (_) {}
           }
           document.addEventListener('DOMContentLoaded', () => {
             document.querySelectorAll('#ch_logo2, #ch_logo3, #ch_logo4, .naverArea, .kakaoArea, .daumArea, .nexonArea').forEach((element) => { element.style.display = 'none'; });
           }, {once: true});
         })();
         """
+        .replacingOccurrences(of: "__XIVKR_SETTINGS_JSON__", with: settingsJSON)
     }
 
     private static func javascriptString(_ value: String) -> String {
