@@ -16,7 +16,7 @@ enum LauncherLogEvent: Sendable {
     case installCompleted
     case installCancelled
     case installFailed
-    case loginWindowOpened
+    case launcherWindowOpened
     case loginPageLoaded
     case loginSucceeded
     case loginUnsupported
@@ -40,8 +40,8 @@ enum LauncherLogEvent: Sendable {
             return "설치를 중지했습니다."
         case .installFailed:
             return "설치 또는 업데이트에 실패했습니다."
-        case .loginWindowOpened:
-            return "공식 로그인 창을 열었습니다."
+        case .launcherWindowOpened:
+            return "공식 런처 창을 열었습니다."
         case .loginPageLoaded:
             return "공식 로그인 페이지를 불러왔습니다."
         case .loginSucceeded:

@@ -80,7 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         buildMenu()
         buildWindow()
         logger.record(.appStarted)
-        logger.record(.loginWindowOpened)
+        logger.record(.launcherWindowOpened)
 
         let controller = WebLoginController(
             parent: window,
@@ -140,7 +140,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func buildWindow() {
         window = LauncherWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 400, height: 690),
+            contentRect: NSRect(x: 0, y: 0, width: 1360, height: 850),
             styleMask: [.borderless, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -148,7 +148,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.title = "XIV KR Launcher"
         window.hasShadow = true
         window.isReleasedWhenClosed = false
-        window.contentMinSize = NSSize(width: 400, height: 690)
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)

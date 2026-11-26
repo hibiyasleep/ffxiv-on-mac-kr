@@ -30,7 +30,7 @@ func externalBrowserURL(_ rawURL: URL?) -> URL? {
 /// WKWebView subclass can see them, so the drag target must be a sibling view
 /// placed above the page.
 private final class LauncherDragOverlay: NSView {
-    var trailingControlWidth: CGFloat = 70
+    var trailingControlWidth: CGFloat = 180
 
     override var isOpaque: Bool { false }
 
@@ -84,7 +84,6 @@ private final class PatchProgressCoalescer: @unchecked Sendable {
 /// supplies the documented callbacks, performs the update, and starts Wine.
 @MainActor
 final class WebLoginController: NSObject, WKNavigationDelegate, WKUIDelegate, NSWindowDelegate, WKScriptMessageHandler {
-    private static let loginContentSize = NSSize(width: 400, height: 690)
     private enum Phase { case idle, checkingVersion, waitingForUpdate, updating, ready, authorizing, launching }
 
     private let parent: NSWindow
@@ -134,7 +133,7 @@ final class WebLoginController: NSObject, WKNavigationDelegate, WKUIDelegate, NS
 
     func show() {
         if let webView {
-            resizeForLogin()
+            resizeForLauncher()
             parent.contentView = webView
             parent.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
@@ -147,7 +146,7 @@ final class WebLoginController: NSObject, WKNavigationDelegate, WKUIDelegate, NS
         updateTask = nil
         patchProgressCoalescer.clear()
         resetPatchSpeed()
-        resizeForLogin()
+        resizeForLauncher()
 
         // Match the official launcher's cookie behavior. The WebView is still
         // navigation-locked to the exact official origin, while its persistent
@@ -343,7 +342,6 @@ final class WebLoginController: NSObject, WKNavigationDelegate, WKUIDelegate, NS
         }
         LauncherLog.shared.record(.loginSucceeded)
         phase = .checkingVersion
-        resizeForLauncher()
         checkVersionAndCompleteResize()
     }
 
@@ -587,25 +585,10 @@ final class WebLoginController: NSObject, WKNavigationDelegate, WKUIDelegate, NS
         let width = min(CGFloat(1360), visible.width)
         let height = min(CGFloat(850), visible.height)
         let size = NSSize(width: max(460, width), height: max(760, height))
-        dragOverlay?.trailingControlWidth = 180
         restoreFrame = nil
         parent.contentMinSize = NSSize(width: min(size.width, 1360), height: min(size.height, 850))
         parent.setContentSize(size)
         parent.setFrameOrigin(NSPoint(x: visible.midX - parent.frame.width / 2, y: visible.midY - parent.frame.height / 2))
-    }
-
-    private func resizeForLogin() {
-        let size = Self.loginContentSize
-        dragOverlay?.trailingControlWidth = 70
-        restoreFrame = nil
-        parent.contentMinSize = size
-        parent.setContentSize(size)
-        if let visible = (parent.screen ?? NSScreen.main)?.visibleFrame {
-            parent.setFrameOrigin(NSPoint(
-                x: visible.midX - parent.frame.width / 2,
-                y: visible.midY - parent.frame.height / 2
-            ))
-        }
     }
 
     private func maximizeLauncher() {
@@ -633,7 +616,6 @@ final class WebLoginController: NSObject, WKNavigationDelegate, WKUIDelegate, NS
         updateStarted = false
         patchProgressCoalescer.clear()
         resetPatchSpeed()
-        resizeForLogin()
         webView.load(URLRequest(url: officialLoginURL, cachePolicy: .reloadIgnoringLocalCacheData))
     }
 
