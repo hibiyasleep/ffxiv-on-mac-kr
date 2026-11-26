@@ -108,6 +108,9 @@ final class WebLoginController: NSObject, WKNavigationDelegate, WKUIDelegate, NS
     private var patchSpeedTime = Date.timeIntervalSinceReferenceDate
     private var patchBytesPerSecond = 0.0
     private var restoreFrame: NSRect?
+    private let pageDefaults = UserDefaults.standard
+    private var closeButtonMode = 0
+    private var licenseAgreement = 0
 
     var isClosed: Bool { closed }
 
@@ -130,6 +133,8 @@ final class WebLoginController: NSObject, WKNavigationDelegate, WKUIDelegate, NS
         self.cancelUpdate = cancelUpdate
         self.message = message
         super.init()
+        closeButtonMode = savedFlag("xivkr.page.closeButtonMode")
+        licenseAgreement = savedFlag("xivkr.page.licenseAgreement")
     }
 
     func show() {
@@ -268,7 +273,12 @@ final class WebLoginController: NSObject, WKNavigationDelegate, WKUIDelegate, NS
             cancelOfficialUpdate()
             phase = .idle
             reloadOfficialPage()
-        case "Close", "LauncherClose":
+        case "SetTheme", "SetBackgroundImage", "SetCloseButtonMode", "SetStartButtonMode", "SetCloseButtonFirstClicked", "SetLicenseAgreement":
+            savePageSetting(args)
+        case "LauncherClose":
+            guard phase == .idle || phase == .ready else { break }
+            if closeButtonMode == 0 { parent.miniaturize(nil) } else { closeWindow() }
+        case "Close":
             if phase == .idle || phase == .ready { closeWindow() }
         case "LauncherLoginClose":
             if phase == .idle { closeWindow() }
@@ -328,12 +338,13 @@ final class WebLoginController: NSObject, WKNavigationDelegate, WKUIDelegate, NS
         let script = """
         (() => {
           if (typeof AppStartData !== 'function') return false;
-          AppStartData(1, '1', '0', __XIVKR_GAME_PATH__, __XIVKR_VERSION__);
+          AppStartData(1, '1', '0', __XIVKR_GAME_PATH__, __XIVKR_VERSION__, __XIVKR_LICENSE__);
           return true;
         })();
         """
         .replacingOccurrences(of: "__XIVKR_GAME_PATH__", with: Self.javascriptString(installPath))
         .replacingOccurrences(of: "__XIVKR_VERSION__", with: Self.javascriptString(launcherVersion))
+        .replacingOccurrences(of: "__XIVKR_LICENSE__", with: licenseAgreement == 1 ? "1" : "0")
         webView.evaluateJavaScript(script) { [weak self] result, error in
             Task { @MainActor [weak self] in
                 guard let self, !self.closed else { return }
@@ -746,16 +757,77 @@ final class WebLoginController: NSObject, WKNavigationDelegate, WKUIDelegate, NS
         }
     }
 
+    // MARK: Page preferences
+
+    private func savedFlag(_ key: String) -> Int {
+        Self.flag(pageDefaults.object(forKey: key)) ?? 0
+    }
+
+    private func savePageSetting(_ args: [Any]) {
+        guard let body = args.first as? [String: Any],
+              let key = body["key"] as? String else { return }
+        switch key {
+        case "theme", "closeButtonMode", "startButtonMode", "closeButtonFirstClicked", "licenseAgreement":
+            guard let flag = Self.flag(body["value"]) else { return }
+            pageDefaults.set(flag, forKey: "xivkr.page.\(key)")
+            if key == "closeButtonMode" { closeButtonMode = flag }
+            if key == "licenseAgreement" { licenseAgreement = flag }
+        case "backgroundImage":
+            guard let index = Self.backgroundIndex(body["value"]) else { return }
+            pageDefaults.set(index, forKey: "xivkr.page.backgroundImage")
+        default:
+            break
+        }
+    }
+
+    private static func flag(_ value: Any?) -> Int? {
+        if let number = value as? NSNumber {
+            let int = number.intValue
+            if int == 0 || int == 1 { return int }
+        }
+        if let text = value as? String, text == "0" || text == "1" { return text == "1" ? 1 : 0 }
+        return nil
+    }
+
+    private static func backgroundIndex(_ value: Any?) -> Int? {
+        let index: Int?
+        if let number = value as? NSNumber, number.doubleValue == Double(number.intValue) {
+            index = number.intValue
+        } else if let text = value as? String, let parsed = Int(text), String(parsed) == text {
+            index = parsed
+        } else {
+            index = nil
+        }
+        guard let index, (0...31).contains(index) else { return nil }
+        return index
+    }
+
+    /// Free gigabytes on the volume that holds the game. The directory may not exist yet.
+    private func remainingDiskSpaceGb() -> Int {
+        var url = standalonePrefixURL(homeURL: FileManager.default.homeDirectoryForCurrentUser)
+            .appendingPathComponent(gameRelativePath, isDirectory: true)
+        while true {
+            if let available = try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+                .volumeAvailableCapacityForImportantUsage {
+                return Int(max(Int64(0), available) / 1_000_000_000)
+            }
+            let parent = url.deletingLastPathComponent()
+            if parent.path == url.path { return 0 }
+            url = parent
+        }
+    }
+
     // MARK: Script source
 
     private func bridgeScript() -> String {
         let installPath = windowsGamePath.lowercased().hasSuffix("\\game")
             ? String(windowsGamePath.dropLast(5))
             : windowsGamePath
-        let settings: [String: Any] = [
-            "theme": 0,
-            "closeButtonMode": 0,
-            "startButtonMode": 0,
+        let backgroundImage = Self.backgroundIndex(pageDefaults.object(forKey: "xivkr.page.backgroundImage"))
+        var settings: [String: Any] = [
+            "theme": savedFlag("xivkr.page.theme"),
+            "closeButtonMode": closeButtonMode,
+            "startButtonMode": savedFlag("xivkr.page.startButtonMode"),
             "gameInstallPath": installPath,
             "screenMode": "0",
             "uiScaling": "1",
@@ -764,16 +836,17 @@ final class WebLoginController: NSObject, WKNavigationDelegate, WKUIDelegate, NS
             "cpuHighPerformanceMode": 0,
             "errorReportAgreement": 0,
             "launcherVersion": launcherVersion,
-            "remainingDiskSpaceGb": 0,
-            "closeButtonFirstClicked": 0,
+            "remainingDiskSpaceGb": remainingDiskSpaceGb(),
+            "closeButtonFirstClicked": savedFlag("xivkr.page.closeButtonFirstClicked"),
             "uiScalingAutoAdjusted": false,
             "effectiveUiScaling": 1,
-            "firstLoginSucceeded": 0,
+            "firstLoginSucceeded": 1,
             "integrityCheckInProgress": 0,
             "os": "",
             "resolution": "",
-            "backgroundImage": NSNull(),
+            "licenseAgreement": licenseAgreement,
         ]
+        settings["backgroundImage"] = backgroundImage ?? NSNull()
         let settingsJSON: String
         if let data = try? JSONSerialization.data(withJSONObject: settings),
            let encoded = String(data: data, encoding: .utf8) {
@@ -787,10 +860,25 @@ final class WebLoginController: NSObject, WKNavigationDelegate, WKUIDelegate, NS
             try { window.webkit.messageHandlers.xivkr.postMessage({name: name, args: Array.prototype.slice.call(args)}); } catch (_) {}
           };
           const settingsJSON = __XIVKR_SETTINGS_JSON__;
+          let settings = {};
+          try { settings = JSON.parse(settingsJSON) || {}; } catch (_) {}
+          const rawValue = (args) => {
+            const raw = args.length ? args[0] : undefined;
+            if (raw && typeof raw === 'object') {
+              if (raw.bMode !== undefined) return raw.bMode;
+              if (raw.isAgreement !== undefined) return raw.isAgreement;
+            }
+            return raw;
+          };
+          const flag = (value) => (value === true || value === 1 || value === '1') ? 1 : 0;
+          const save = (name, key, value) => {
+            settings[key] = value;
+            post(name, [{key: key, value: value}]);
+          };
           const bridge = {
             GetDataReady() { post('GetDataReady', arguments); return true; },
             LoginSuccess() {
-              const value = arguments[0] || window.loginCheck;
+              const value = window.loginCheck;
               const text = (key) => value && value[key] != null ? String(value[key]) : '';
               post('LoginSuccess', [{csiteNo: text('csiteNo'), freeIC: text('freeIC'), freeTrial: text('freeTrial')}]);
               return true;
@@ -815,10 +903,30 @@ final class WebLoginController: NSObject, WKNavigationDelegate, WKUIDelegate, NS
             GetAllLauncherSettings() {
               post('GetAllLauncherSettings', arguments);
               try {
-                if (typeof AppLauncherSettingsJson === 'function') AppLauncherSettingsJson(settingsJSON);
+                if (typeof AppLauncherSettingsJson === 'function') AppLauncherSettingsJson(JSON.stringify(settings));
               } catch (_) {}
               return true;
             },
+            SetTheme() { save('SetTheme', 'theme', flag(rawValue(arguments))); return true; },
+            SetBackgroundImage() {
+              const raw = arguments[0];
+              const index = typeof raw === 'number' ? raw : Number(raw);
+              if (Number.isInteger(index) && index >= 0 && index <= 31) save('SetBackgroundImage', 'backgroundImage', index);
+              return true;
+            },
+            SetCloseButtonMode() { save('SetCloseButtonMode', 'closeButtonMode', flag(rawValue(arguments))); return true; },
+            SetStartButtonMode() { save('SetStartButtonMode', 'startButtonMode', flag(rawValue(arguments))); return true; },
+            SetCloseButtonFirstClicked() { save('SetCloseButtonFirstClicked', 'closeButtonFirstClicked', flag(rawValue(arguments))); return true; },
+            SetLicenseAgreement() { save('SetLicenseAgreement', 'licenseAgreement', flag(rawValue(arguments))); return true; },
+            SetCpuHighPerformanceMode() { settings.cpuHighPerformanceMode = flag(rawValue(arguments)); return true; },
+            SetErrorReportFlag() { settings.errorReportAgreement = flag(rawValue(arguments)); return true; },
+            SetMultiDownloadMode() { settings.multiDownloadMode = flag(rawValue(arguments)); return true; },
+            SetScreenMode() {
+              const raw = rawValue(arguments);
+              settings.screenMode = (raw === true || raw === 0 || raw === '0') ? '0' : '1';
+              return true;
+            },
+            SetFirstLoginSucceeded() { settings.firstLoginSucceeded = flag(rawValue(arguments)); return true; },
             LauncherLogOut() { post('LauncherLogOut', arguments); return true; },
             LauncherLogOut2() { post('LauncherLogOut', arguments); return true; }
           };
