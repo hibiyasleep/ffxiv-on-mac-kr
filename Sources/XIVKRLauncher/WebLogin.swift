@@ -335,7 +335,7 @@ final class WebLoginController: NSObject, WKNavigationDelegate, WKUIDelegate, NS
             fail("로그인 계정 유형을 확인하지 못했습니다.")
             return
         }
-        guard csiteNo == "0", freeIC == "X", freeTrial != "O" else {
+        guard csiteNo == "0", freeIC == "", freeTrial == "" else {
             LauncherLog.shared.record(.loginUnsupported)
             fail("액토즈 일반 이용권 계정만 지원합니다. 네이버·카카오·PC방·무료 플레이는 지원하지 않습니다.")
             return
